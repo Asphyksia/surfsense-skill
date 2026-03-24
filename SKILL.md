@@ -1,7 +1,7 @@
 ---
 name: surfsense-rag
 description: Full integration with SurfSense RAG backend. Gives Hermes 25 tools for document management, knowledge base search, conversation threads, reports, notes, and audit logs. Upload PDFs, spreadsheets, Word docs, images — ask questions in natural language, get structured data for dashboards.
-version: 1.0.0
+version: 2.0.0
 requires: SurfSense running (Docker recommended), Python 3.11+
 author: Asphyksia
 license: MIT
@@ -84,7 +84,7 @@ docker compose up -d
 
 SurfSense will be available at `http://localhost:8929`.
 
-### 2. Start the MCP wrapper
+### 2. Start the MCP server
 
 ```bash
 cd /path/to/this/skill
@@ -102,7 +102,7 @@ MCP_PORT=8000 \
 python mcp_server.py
 ```
 
-The MCP server runs at `http://localhost:8000/mcp`.
+The MCP server runs at `http://localhost:8000/mcp` using the standard MCP Streamable HTTP transport. A legacy JSON-RPC endpoint is also available at `http://localhost:8000/jsonrpc`.
 
 ### 3. Configure Hermes
 
@@ -156,7 +156,7 @@ All configuration via environment variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SURFSENSE_BASE_URL` | `http://localhost:8929` | SurfSense backend URL |
-| `SURFSENSE_EMAIL` | `admin@documenter.local` | Login email |
+| `SURFSENSE_EMAIL` | `admin@documenter.app` | Login email |
 | `SURFSENSE_PASSWORD` | `admin` | Login password |
 | `MCP_PORT` | `8000` | Port for this MCP server |
 
