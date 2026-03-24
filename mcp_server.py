@@ -27,7 +27,6 @@ from pathlib import Path
 from typing import Any, Optional
 
 import httpx
-import uvicorn
 from mcp.server.fastmcp import FastMCP
 
 # ---------------------------------------------------------------------------
@@ -53,8 +52,9 @@ logger = logging.getLogger("mcp")
 
 mcp = FastMCP(
     "DocuMentor",
-    version="0.4.0",
-    description="University document intelligence — upload, index, query, and analyze documents via SurfSense.",
+    host="0.0.0.0",
+    port=MCP_PORT,
+    stateless_http=True,
 )
 
 # ---------------------------------------------------------------------------
@@ -591,10 +591,26 @@ async def surfsense_get_logs(search_space_id: int | None = None, limit: int = 50
 # ===========================================================================
 
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
 
 
-async def legacy_mcp_endpoint(request: Request) -> JSONResponse:
+# ---------------------------------------------------------------------------
+# Custom routes (registered via FastMCP.custom_route)
+# ---------------------------------------------------------------------------
+
+@mcp.custom_route("/health", methods=["GET"])
+async def health_endpoint(request: Request) -> Response:
+    tools = await mcp.list_tools()
+    return JSONResponse(content={
+        "status": "ok",
+        "service": "documenter-mcp",
+        "version": "0.4.0",
+        "tools": len(tools),
+    })
+
+
+@mcp.custom_route("/jsonrpc", methods=["POST"])
+async def legacy_mcp_endpoint(request: Request) -> Response:
     """JSON-RPC endpoint for backward compatibility with the bridge."""
     body = await request.json()
     method = body.get("method")
@@ -609,10 +625,10 @@ async def legacy_mcp_endpoint(request: Request) -> JSONResponse:
                 "serverInfo": {"name": "documenter-mcp", "version": "0.4.0"},
             }
         elif method == "tools/list":
-            tools = await mcp._mcp_server.list_tools()
+            tools = await mcp.list_tools()
             result = {"tools": [
                 {"name": t.name, "description": t.description or "", "inputSchema": t.inputSchema}
-                for t in tools.tools
+                for t in tools
             ]}
         elif method == "tools/call":
             tool_name = params.get("name")
@@ -620,15 +636,13 @@ async def legacy_mcp_endpoint(request: Request) -> JSONResponse:
             logger.info("Legacy JSON-RPC call: %s(%s)", tool_name, list(tool_args.keys()))
             t0 = time.time()
 
-            # Call tool via the MCP tool registry
-            from mcp.types import CallToolResult, TextContent
-            call_result = await mcp._mcp_server.call_tool(tool_name, tool_args)
+            content_blocks = await mcp.call_tool(tool_name, tool_args)
             elapsed = time.time() - t0
             logger.info("Tool %s completed in %.1fs", tool_name, elapsed)
 
             result = {"content": [
-                {"type": c.type, "text": c.text} if hasattr(c, "text") else {"type": "text", "text": str(c)}
-                for c in call_result.content
+                {"type": "text", "text": c.text} if hasattr(c, "text") else {"type": "text", "text": str(c)}
+                for c in content_blocks
             ]}
         elif method == "notifications/initialized":
             return JSONResponse(content=None, status_code=204)
@@ -648,43 +662,15 @@ async def legacy_mcp_endpoint(request: Request) -> JSONResponse:
         }, status_code=200)
 
 
-async def health_endpoint(request: Request) -> JSONResponse:
-    tools = await mcp._mcp_server.list_tools()
-    return JSONResponse(content={
-        "status": "ok",
-        "service": "documenter-mcp",
-        "version": "0.4.0",
-        "tools": len(tools.tools),
-    })
-
-
 # ===========================================================================
 # Entry point
 # ===========================================================================
 
 if __name__ == "__main__":
-    from starlette.applications import Starlette
-    from starlette.routing import Route, Mount
-
-    # Get the MCP ASGI app (Streamable HTTP on /mcp)
-    mcp_app = mcp.streamable_http_app()
-
-    # Compose: MCP protocol at /mcp, legacy JSON-RPC at /jsonrpc, health at /health
-    app = Starlette(
-        routes=[
-            Route("/health", health_endpoint, methods=["GET"]),
-            Route("/jsonrpc", legacy_mcp_endpoint, methods=["POST"]),
-            # Legacy: bridge still POSTs to /mcp — handle non-MCP POSTs
-            Route("/legacy-mcp", legacy_mcp_endpoint, methods=["POST"]),
-            # Mount MCP protocol app (handles GET/POST/DELETE on /mcp)
-            Mount("/", app=mcp_app),
-        ],
-    )
-
     logger.info("Starting DocuMentor MCP Server v0.4.0 on port %s", MCP_PORT)
     logger.info("SurfSense backend: %s", SURFSENSE_BASE)
-    logger.info("MCP protocol: http://0.0.0.0:%s/mcp (Streamable HTTP)", MCP_PORT)
-    logger.info("Legacy JSON-RPC: http://0.0.0.0:%s/jsonrpc (bridge)", MCP_PORT)
-    logger.info("Health: http://0.0.0.0:%s/health", MCP_PORT)
+    logger.info("MCP protocol: /mcp (Streamable HTTP)")
+    logger.info("Legacy JSON-RPC: /jsonrpc (bridge)")
+    logger.info("Health: /health")
 
-    uvicorn.run(app, host="0.0.0.0", port=MCP_PORT, log_level="info")
+    mcp.run(transport="streamable-http")
