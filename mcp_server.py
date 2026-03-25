@@ -406,9 +406,9 @@ async def _query_surfsense(query: str, search_space_id: int, thread_id: str | No
     ) as stream:
         async for line in stream.aiter_lines():
             line_count += 1
-            # Log first 10 lines and every 50th after that
-            if line_count <= 10 or line_count % 50 == 0:
-                logger.info("SSE line %d: %r", line_count, line[:200])
+            # Log first 15 lines and every 50th after that (to capture text-delta format)
+            if line_count <= 15 or line_count % 50 == 0:
+                logger.info("SSE line %d: %r", line_count, line[:300])
 
             # Handle standard SSE format: "data: ..." lines
             if line.startswith("data:"):
@@ -426,16 +426,27 @@ async def _query_surfsense(query: str, search_space_id: int, thread_id: str | No
             try:
                 event = json.loads(chunk)
                 if isinstance(event, dict):
-                    if event.get("type") == "text-delta":
-                        full_response += event.get("textDelta", "")
+                    etype = event.get("type", "")
+                    edata = event.get("data", {}) if isinstance(event.get("data"), dict) else {}
+
+                    if etype == "text-delta":
+                        # Text delta: content in textDelta (top level or nested in data)
+                        delta = event.get("textDelta") or edata.get("textDelta") or edata.get("text", "")
+                        full_response += delta
+                    elif etype == "data-text-delta":
+                        # Alternative format: data.textDelta or data.text
+                        full_response += edata.get("textDelta") or edata.get("text", "")
                     elif "content" in event:
                         full_response += str(event["content"])
-                    elif "text" in event:
+                    elif "text" in event and etype not in ("text-start", "text-end", "start", "finish", "start-step", "finish-step"):
                         full_response += str(event["text"])
                     elif "delta" in event and isinstance(event["delta"], str):
                         full_response += event["delta"]
+                    elif etype in ("start", "start-step", "finish", "finish-step", "text-start", "text-end", "data-thinking-step", "data-thread-title-update"):
+                        # Known control events — skip silently
+                        pass
                     else:
-                        # Unknown structure — log and skip
+                        # Unknown structure — log
                         logger.info("Unhandled SSE event (line %d): keys=%s first200=%s", line_count, list(event.keys()), str(event)[:200])
                 else:
                     # Scalar JSON value (string, number)
