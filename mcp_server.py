@@ -394,9 +394,13 @@ async def _query_surfsense(query: str, search_space_id: int, thread_id: str | No
     full_response = ""
     async with client.stream(
         "POST",
-        f"{SURFSENSE_BASE}/api/v1/threads/{thread_id}/messages",
+        f"{SURFSENSE_BASE}/api/v1/new_chat",
         headers=headers,
-        json={"search_space_id": search_space_id, "message": query, "stream": True},
+        json={
+            "chat_id": int(thread_id),
+            "user_query": query,
+            "search_space_id": search_space_id,
+        },
         timeout=120,
     ) as stream:
         async for line in stream.aiter_lines():
