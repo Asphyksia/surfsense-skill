@@ -430,9 +430,11 @@ async def _query_surfsense(query: str, search_space_id: int, thread_id: str | No
                     edata = event.get("data", {}) if isinstance(event.get("data"), dict) else {}
 
                     if etype == "text-delta":
-                        # Text delta: content in textDelta (top level or nested in data)
-                        delta = event.get("textDelta") or edata.get("textDelta") or edata.get("text", "")
-                        full_response += delta
+                        # SurfSense format: {"type":"text-delta","id":"...","delta":"text"}
+                        # Also handle textDelta variant for compatibility
+                        delta = event.get("delta") or event.get("textDelta") or edata.get("delta") or edata.get("textDelta", "")
+                        if isinstance(delta, str):
+                            full_response += delta
                     elif etype == "data-text-delta":
                         # Alternative format: data.textDelta or data.text
                         full_response += edata.get("textDelta") or edata.get("text", "")
