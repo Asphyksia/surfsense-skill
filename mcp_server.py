@@ -406,9 +406,6 @@ async def _query_surfsense(query: str, search_space_id: int, thread_id: str | No
     ) as stream:
         async for line in stream.aiter_lines():
             line_count += 1
-            # Log first 15 lines and every 50th after that (to capture text-delta format)
-            if line_count <= 15 or line_count % 50 == 0:
-                logger.info("SSE line %d: %r", line_count, line[:300])
 
             # Handle standard SSE format: "data: ..." lines
             if line.startswith("data:"):
@@ -448,8 +445,8 @@ async def _query_surfsense(query: str, search_space_id: int, thread_id: str | No
                         # Known control events — skip silently
                         pass
                     else:
-                        # Unknown structure — log
-                        logger.info("Unhandled SSE event (line %d): keys=%s first200=%s", line_count, list(event.keys()), str(event)[:200])
+                        # Unknown structure — log at debug level
+                        logger.debug("Unhandled SSE event: keys=%s", list(event.keys()))
                 else:
                     # Scalar JSON value (string, number)
                     full_response += str(event)
@@ -457,7 +454,7 @@ async def _query_surfsense(query: str, search_space_id: int, thread_id: str | No
                 # Raw text chunk, not JSON
                 full_response += chunk
 
-    logger.info("SSE stream finished: %d lines, response_len=%d, first200=%r", line_count, len(full_response), full_response[:200])
+    logger.info("Query completed (thread=%s, response_len=%d)", thread_id, len(full_response))
 
     dashboard_data = _parse_dashboard_json(full_response, query)
     logger.info("Query completed (thread=%s, response_len=%d)", thread_id, len(full_response))
