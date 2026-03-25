@@ -671,9 +671,30 @@ async def legacy_mcp_endpoint(request: Request) -> Response:
             elapsed = time.time() - t0
             logger.info("Tool %s completed in %.1fs", tool_name, elapsed)
 
+            # Handle different return types from FastMCP
+            texts = []
+            if isinstance(content_blocks, str):
+                texts.append(content_blocks)
+            elif isinstance(content_blocks, list):
+                for c in content_blocks:
+                    if hasattr(c, "text"):
+                        texts.append(c.text)
+                    elif isinstance(c, dict) and "text" in c:
+                        texts.append(c["text"])
+                    elif isinstance(c, str):
+                        texts.append(c)
+                    else:
+                        texts.append(str(c))
+            else:
+                texts.append(str(content_blocks))
+
+            if not texts:
+                texts.append("{}")
+
+            logger.debug("Tool %s response types: %s", tool_name, [type(c).__name__ for c in (content_blocks if isinstance(content_blocks, list) else [content_blocks])])
+
             result = {"content": [
-                {"type": "text", "text": c.text} if hasattr(c, "text") else {"type": "text", "text": str(c)}
-                for c in content_blocks
+                {"type": "text", "text": t} for t in texts
             ]}
         elif method == "notifications/initialized":
             return JSONResponse(content=None, status_code=204)
