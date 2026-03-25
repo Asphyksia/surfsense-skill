@@ -392,6 +392,7 @@ async def _query_surfsense(query: str, search_space_id: int, thread_id: str | No
         thread_id = str(resp.json()["id"])
 
     full_response = ""
+    line_count = 0
     async with client.stream(
         "POST",
         f"{SURFSENSE_BASE}/api/v1/new_chat",
@@ -404,6 +405,11 @@ async def _query_surfsense(query: str, search_space_id: int, thread_id: str | No
         timeout=120,
     ) as stream:
         async for line in stream.aiter_lines():
+            line_count += 1
+            # Log first 10 lines and every 50th after that
+            if line_count <= 10 or line_count % 50 == 0:
+                logger.info("SSE line %d: %r", line_count, line[:200])
+
             # Handle standard SSE format: "data: ..." lines
             if line.startswith("data:"):
                 chunk = line[5:].strip()
@@ -430,13 +436,15 @@ async def _query_surfsense(query: str, search_space_id: int, thread_id: str | No
                         full_response += event["delta"]
                     else:
                         # Unknown structure — log and skip
-                        logger.debug("Unhandled SSE event structure: %s", list(event.keys()))
+                        logger.info("Unhandled SSE event (line %d): keys=%s first200=%s", line_count, list(event.keys()), str(event)[:200])
                 else:
                     # Scalar JSON value (string, number)
                     full_response += str(event)
             except json.JSONDecodeError:
                 # Raw text chunk, not JSON
                 full_response += chunk
+
+    logger.info("SSE stream finished: %d lines, response_len=%d, first200=%r", line_count, len(full_response), full_response[:200])
 
     dashboard_data = _parse_dashboard_json(full_response, query)
     logger.info("Query completed (thread=%s, response_len=%d)", thread_id, len(full_response))
