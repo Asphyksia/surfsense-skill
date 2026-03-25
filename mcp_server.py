@@ -404,17 +404,39 @@ async def _query_surfsense(query: str, search_space_id: int, thread_id: str | No
         timeout=120,
     ) as stream:
         async for line in stream.aiter_lines():
+            # Handle standard SSE format: "data: ..." lines
             if line.startswith("data:"):
                 chunk = line[5:].strip()
-                if chunk and chunk != "[DONE]":
-                    try:
-                        event = json.loads(chunk)
-                        if event.get("type") == "text-delta":
-                            full_response += event.get("textDelta", "")
-                        elif isinstance(event, dict) and "content" in event:
-                            full_response += str(event["content"])
-                    except json.JSONDecodeError:
-                        full_response += chunk
+            elif line.startswith("event:") or not line.strip():
+                # Skip event type lines and empty keepalive lines
+                continue
+            else:
+                # Some endpoints send raw JSON without "data:" prefix
+                chunk = line.strip()
+
+            if not chunk or chunk == "[DONE]":
+                continue
+
+            try:
+                event = json.loads(chunk)
+                if isinstance(event, dict):
+                    if event.get("type") == "text-delta":
+                        full_response += event.get("textDelta", "")
+                    elif "content" in event:
+                        full_response += str(event["content"])
+                    elif "text" in event:
+                        full_response += str(event["text"])
+                    elif "delta" in event and isinstance(event["delta"], str):
+                        full_response += event["delta"]
+                    else:
+                        # Unknown structure — log and skip
+                        logger.debug("Unhandled SSE event structure: %s", list(event.keys()))
+                else:
+                    # Scalar JSON value (string, number)
+                    full_response += str(event)
+            except json.JSONDecodeError:
+                # Raw text chunk, not JSON
+                full_response += chunk
 
     dashboard_data = _parse_dashboard_json(full_response, query)
     logger.info("Query completed (thread=%s, response_len=%d)", thread_id, len(full_response))
@@ -429,18 +451,23 @@ async def _query_surfsense(query: str, search_space_id: int, thread_id: str | No
 
 
 def _parse_dashboard_json(text: str, query: str) -> dict:
-    json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    """Try to extract dashboard JSON from response text, fall back to summary."""
+    # Greedy match between fences to capture nested {}
+    json_match = re.search(r"```(?:json)?\s*(\{.+\})\s*```", text, re.DOTALL)
     if json_match:
         try:
             return json.loads(json_match.group(1))
         except json.JSONDecodeError:
             pass
-    try:
-        parsed = json.loads(text)
-        if isinstance(parsed, dict):
-            return parsed
-    except (json.JSONDecodeError, ValueError):
-        pass
+    # Try as raw JSON
+    text_stripped = text.strip()
+    if text_stripped.startswith("{") and text_stripped.endswith("}"):
+        try:
+            parsed = json.loads(text_stripped)
+            if isinstance(parsed, dict):
+                return parsed
+        except (json.JSONDecodeError, ValueError):
+            pass
     return {"type": "summary", "content": text, "query": query}
 
 
