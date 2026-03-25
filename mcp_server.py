@@ -667,15 +667,24 @@ async def legacy_mcp_endpoint(request: Request) -> Response:
             logger.info("Legacy JSON-RPC call: %s(%s)", tool_name, list(tool_args.keys()))
             t0 = time.time()
 
-            content_blocks = await mcp.call_tool(tool_name, tool_args)
+            raw_result = await mcp.call_tool(tool_name, tool_args)
             elapsed = time.time() - t0
             logger.info("Tool %s completed in %.1fs", tool_name, elapsed)
 
-            # Handle different return types from FastMCP
+            # FastMCP call_tool() returns different things depending on version:
+            # - tuple: (list[TextContent], dict_metadata)
+            # - list: [TextContent, ...]
+            # - str: plain string
+            # Extract the actual content blocks first
+            if isinstance(raw_result, tuple):
+                content_blocks = raw_result[0]  # first element is the list
+            else:
+                content_blocks = raw_result
+
             texts = []
             if isinstance(content_blocks, str):
                 texts.append(content_blocks)
-            elif isinstance(content_blocks, list):
+            elif isinstance(content_blocks, (list, tuple)):
                 for c in content_blocks:
                     if hasattr(c, "text"):
                         texts.append(c.text)
@@ -686,12 +695,14 @@ async def legacy_mcp_endpoint(request: Request) -> Response:
                     else:
                         texts.append(str(c))
             else:
-                texts.append(str(content_blocks))
+                # Last resort
+                if hasattr(content_blocks, "text"):
+                    texts.append(content_blocks.text)
+                else:
+                    texts.append(str(content_blocks))
 
             if not texts:
                 texts.append("{}")
-
-            logger.debug("Tool %s response types: %s", tool_name, [type(c).__name__ for c in (content_blocks if isinstance(content_blocks, list) else [content_blocks])])
 
             result = {"content": [
                 {"type": "text", "text": t} for t in texts
